@@ -12,6 +12,7 @@
     "@types/mocha": "^10.0.1",
     "@types/node-fetch": "^2.6.2",
     "@types/selenium-webdriver": "^4.1.10",
+    "axios": "^1.2.2",
     "chromedriver": "^108.0.0",
     "jsdom": "^20.0.3",
     "mocha": "^10.2.0",
@@ -36,6 +37,7 @@
   },
   "homepage": "https://github.com/hulk510/kindle-to-booklog#readme",
   "dependencies": {
+    "dotenv": "^16.0.3",
     "selenium-webdriver": "^4.7.1"
   }
 }
