@@ -11,6 +11,24 @@ const driver = chrome.Driver.createSession(
   new chrome.ServiceBuilder(chromedriver.path).build()
 );
 
+interface ItemList {
+  itemList: Item[];
+  paginationToken: string;
+  libraryType: string;
+  sortType: string;
+}
+interface Item {
+  asin: string;
+  webReaderUrl: string;
+  productUrl: string;
+  title: string;
+  percentageRead: string;
+  authors: string[];
+  resourceType: string;
+  originType: string;
+  mangaOrComicAsin: boolean;
+}
+
 async function search(query: string): Promise<void> {
   const AUTHORS_INTO_ONE_COLUMN = true,
     //   MAX_QUERY_COUNT = 0,
@@ -196,12 +214,18 @@ async function search(query: string): Promise<void> {
       .replace('#LIBRARY_TYPE#', library_type)
       .replace('#PAGINATION_TOKEN#', pagination_token);
 
-    const res = await axios.get(api_url, {
-      headers: {
-        Cookie: convertToNameValueString(cookies),
-      },
-    });
-    console.log(res.data);
+    const itemList = await axios
+      .get(api_url, {
+        headers: {
+          Cookie: convertToNameValueString(cookies),
+        },
+      })
+      .then((res) => {
+        console.log(res);
+        return res.data as ItemList;
+      });
+
+    console.log(itemList.paginationToken);
   } catch (e) {
     console.log(e);
   } finally {
