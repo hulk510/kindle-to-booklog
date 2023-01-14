@@ -1,16 +1,10 @@
 import axios from 'axios';
 import chromedriver from 'chromedriver';
 import dotenv from 'dotenv';
-import { By, until } from 'selenium-webdriver';
+import { Builder, By, until } from 'selenium-webdriver';
 import chrome from 'selenium-webdriver/chrome';
 
 dotenv.config();
-
-function convertToNameValueString(
-  cookies: { name: string; value: string }[]
-): string {
-  return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ');
-}
 
 interface Book {
   asin: string;
@@ -31,35 +25,25 @@ interface BooksResponse {
   sortType: string;
 }
 
+// FIXME: わざわざseleniumにする必要ないのでaxiosでのリクエストに変えたい
 async function getAmazonCookie(): Promise<string> {
-  const driver = chrome.Driver.createSession(
-    new chrome.Options(),
-    new chrome.ServiceBuilder(chromedriver.path).build()
-  );
+  const driver = await new Builder()
+    .forBrowser('chrome')
+    .setChromeService(new chrome.ServiceBuilder(chromedriver.path))
+    .build();
   try {
     await driver.get('https://read.amazon.co.jp/kindle-library');
-    await driver.wait(until.elementLocated(By.id('top-sign-in-btn')), 10000);
-    const signinbtn = await driver.findElement(By.id('top-sign-in-btn'));
-    signinbtn.click();
-    await driver
-      .wait(until.elementLocated(By.id('ap_email')), 5000)
-      .sendKeys(process.env.MY_EMAIL ?? '');
-    await driver
-      .wait(until.elementLocated(By.id('ap_password')), 5000)
-      .sendKeys(process.env.MY_PASSWORD ?? '');
-    await driver
-      .wait(until.elementLocated(By.id('signInSubmit')), 5000)
-      .submit();
+    const signinBtn = await driver.findElement(By.id('top-sign-in-btn'));
+    await signinBtn.click();
+    const email = await driver.findElement(By.id('ap_email'));
+    await email.sendKeys(process.env.MY_EMAIL ?? '');
+    const password = await driver.findElement(By.id('ap_password'));
+    await password.sendKeys(process.env.MY_PASSWORD ?? '');
+    const submit = await driver.findElement(By.id('signInSubmit'));
+    await submit.submit();
     await driver.wait(until.elementLocated(By.id('cover')), 5000);
-    const cookies = await driver
-      .manage()
-      .getCookies()
-      .then(function (cookie) {
-        console.log('cookie details => ', cookie);
-        return cookie;
-      });
-
-    return convertToNameValueString(cookies);
+    const cookies = await driver.manage().getCookies();
+    return cookies.map(({ name, value }) => `${name}=${value}`).join('; ');
   } catch (e) {
     console.log(e);
     return '';
@@ -68,24 +52,28 @@ async function getAmazonCookie(): Promise<string> {
   }
 }
 
-async function fetchBookAsins(cookie: string): Promise<string[]> {
-  const QUERY_SIZE = 50,
-    sortType = 'acquisition_asc',
-    acquiredApiUrlTemplate =
-      'https://read.amazon.co.jp/kindle-library/search?query=&libraryType=#LIBRARY_TYPE#&paginationToken=#PAGINATION_TOKEN#&sortType=' +
-      encodeURIComponent(sortType) +
-      '&querySize=' +
-      encodeURIComponent('' + QUERY_SIZE);
-  const library_type = 'BOOKS'; // 一応なくても動くみたい
-  let pagination_token: string | undefined = '0';
+function createKindleBookSearchUrl(paginationToken: string): string {
+  const QUERY_SIZE = 50;
+  const params = new URLSearchParams();
+  params.append('libraryType', 'BOOKS');
+  params.append('paginationToken', paginationToken);
+  params.append('sortType', 'acquisition_asc');
+  params.append('querySize', QUERY_SIZE.toString());
+  const apiUrl = new URL('https://read.amazon.co.jp/kindle-library/search');
+  apiUrl.search = params.toString();
 
+  return apiUrl.toString();
+}
+
+async function getKindleBookAsinList(cookie: string): Promise<string[]> {
+  let paginationToken: string | undefined = '0';
   const asinList = [];
-  while (pagination_token) {
-    const api_url: string = acquiredApiUrlTemplate
-      .replace('#LIBRARY_TYPE#', library_type)
-      .replace('#PAGINATION_TOKEN#', pagination_token);
+
+  // paginationTokenがresponseに含まれるまで回すことで全件取得するまで繰り返す
+  while (paginationToken) {
+    const apiUrl: string = createKindleBookSearchUrl(paginationToken);
     const response = await axios
-      .get<BooksResponse>(api_url, {
+      .get<BooksResponse>(apiUrl, {
         headers: {
           Cookie: cookie,
         },
@@ -97,20 +85,17 @@ async function fetchBookAsins(cookie: string): Promise<string[]> {
     for (const item of response.itemsList) {
       asinList.push(item.asin);
     }
-    pagination_token = response.paginationToken;
+    paginationToken = response.paginationToken;
   }
-
   return asinList;
 }
 
-async function loginBooklog() {
+async function getBookLogCookie() {
   const url = 'https://booklog.jp/login';
   const cookies = await axios
     .post(
       url,
       {
-        service: 'booklog',
-        ref: '',
         account: process.env.BOOKLOG_ID,
         password: process.env.BOOKLOG_PASSWORD,
       },
@@ -122,12 +107,13 @@ async function loginBooklog() {
         maxRedirects: 0,
       }
     )
+    // 302リダイレクトはエラーになるのでcatchでクッキーを取得する
     // https://zenn.dev/amezousan/articles/2022-08-08-axios
     .catch((err) => {
       return err.response.headers['set-cookie'];
     });
   if (cookies && cookies.length > 0) {
-    return cookies[1]; // TODO: 修正する
+    return cookies[1] as string; // TODO: 修正する
   }
   return '';
 }
@@ -138,8 +124,8 @@ async function uploadBook(cookies: string, asinList: string[]) {
     url,
     {
       isbns: asinList.join('\n'),
-      category_id: 0,
-      status: 4,
+      category_id: 0, // カテゴリ：なし
+      status: 4, // 読書ステータス: 積読
     },
     {
       headers: {
@@ -151,14 +137,18 @@ async function uploadBook(cookies: string, asinList: string[]) {
   );
 }
 
-(async () => {
-  const cookie = await getAmazonCookie();
-  const asinList = await fetchBookAsins(cookie);
-  const cookies = await loginBooklog();
+async function main() {
+  console.log('start');
+  const AmazonCookie = await getAmazonCookie();
+  const asinList = await getKindleBookAsinList(AmazonCookie);
+  const BookLogCookie = await getBookLogCookie();
 
   // ブクログは100件ずつしか登録できないので100件ずつリクエストする
   for (let i = 0; i < asinList.length; i += 100) {
     const chunk = asinList.slice(i, i + 100);
-    await uploadBook(cookies, chunk);
+    await uploadBook(BookLogCookie, chunk);
   }
-})();
+  console.log('done');
+}
+
+main();
