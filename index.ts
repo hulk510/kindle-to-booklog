@@ -123,7 +123,7 @@ async function search(query: string): Promise<void> {
   // これをページのレスポンスから取得する
   // 次のページネーションのトークンが含まれてる見たく、これを次のトークンで差し込めばそれ用に新しいページがAPIで返ってくる
   const library_type = 'BOOKS'; // 一応なくても動くみたい
-  let pagination_token = '0';
+  let pagination_token: string | undefined = '0';
   // let csvLines = [createCsvLine(itemsListKeys)];
   // while (true) {
   //   let api_url = acquiredApiUrlTemplate
@@ -210,27 +210,53 @@ async function search(query: string): Promise<void> {
         console.log('cookie details => ', cookie);
         return cookie;
       });
-    let api_url = acquiredApiUrlTemplate
-      .replace('#LIBRARY_TYPE#', library_type)
-      .replace('#PAGINATION_TOKEN#', pagination_token);
+    const asinList = [];
 
-    const itemList = await axios
-      .get(api_url, {
-        headers: {
-          Cookie: convertToNameValueString(cookies),
-        },
-      })
-      .then((res) => {
-        console.log(res);
-        return res.data as ItemList;
-      });
+    while (pagination_token) {
+      const api_url: string = acquiredApiUrlTemplate
+        .replace('#LIBRARY_TYPE#', library_type)
+        .replace('#PAGINATION_TOKEN#', pagination_token);
+      const response = await axios
+        .get<BooksResponse>(api_url, {
+          headers: {
+            Cookie: convertToNameValueString(cookies),
+          },
+        })
+        .then((res) => {
+          return res.data;
+        });
 
-    console.log(itemList.paginationToken);
+      for (const item of response.itemsList) {
+        asinList.push(item.asin);
+      }
+      pagination_token = response.paginationToken;
+    }
+    console.log(asinList);
+    // TODO: paginationToken並びに、クエリとか使いつつ新しいresponseを生成してcsvに登録ってのをやっていく
   } catch (e) {
     console.log(e);
   } finally {
     driver && (await driver.quit());
   }
+}
+
+interface Book {
+  asin: string;
+  webReaderUrl: string;
+  productUrl: string;
+  title: string;
+  percentageRead: 0;
+  authors: string[];
+  resourceType: string;
+  originType: string;
+  mangaOrComicAsin: boolean;
+}
+
+interface BooksResponse {
+  itemsList: Book[];
+  paginationToken?: string;
+  libraryType: string;
+  sortType: string;
 }
 
 search('selenium');
